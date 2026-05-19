@@ -1,0 +1,88 @@
+---
+title: "Fig4_ML_results"
+output: html_document
+date: "2025-07-14"
+---
+
+
+```{r}
+library(dmrseq)
+library(DMRichR)
+library(ggplot2)
+library(caret)
+library(readr)
+library(forcats)
+library(plyr)
+library(reshape2)
+library(randomcoloR)
+library(ggpubr)
+library(ggthemes)
+
+### Fig 4A ###
+
+mean_training_accuracy <- read.csv(file = "../tables/fig4a_data.csv")
+
+cc_pallete <- c("#345995" ,"#FACC6B" ,"#E40066" ,"#4CB963" ,"#FD16D5" ,
+                "#703D3D" ,"#B400FA" ,"#16F4F8" ,"#FFB316", "#22FC00" ,
+                "#FEA4E9" ,"#43BCCD", "#00A7E1","#FB4D3D")
+
+
+mlplot<- ggplot(mean_training_accuracy, aes(x = Group.1, y = x, 
+  color = Group.2, shape = Group.2, group = Group.2)) +
+  geom_line(linewidth = 1) +  geom_point(size = 3) +  
+  scale_color_manual(values = cc_pallete, name = "ML Model") +
+  scale_shape_manual(values = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13),   name = "ML Model") +
+  labs(title = "Training Performance", x = "Number of DMRs used",  y = "Mean Accuracy") +
+  theme_minimal(base_size = 12) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(face = "plain"),
+  plot.title = element_text(size = 14, face = "bold", hjust = 0.5), legend.position = "bottom",
+  legend.box = "vertical", legend.text = element_text(size = 10),  
+  legend.title = element_text(face = "plain", size = 12) )
+
+mlplot
+```
+
+```{r}
+
+### Fig 4B ###
+
+LOOCV_test_performance_melt_slim <- read.csv(file = "../tables/fig4b_data_main.csv")
+LOOCV_test_performance_melt_slim$Model <- factor(LOOCV_test_performance_melt_slim$Model, 
+                                                  levels = c("WeightedEnsemble_L2","ExtraTreesGini","NeuralNetTorch"))
+ 
+clrs<-randomColor(3,luminosity = "bright")
+#("#041572", "#edd363", "#d653e0")
+
+ml_test<-ggplot(LOOCV_test_performance_melt_slim, aes(x = as.numeric(X), y = value, color = variable)) +  
+  geom_line(linewidth=1) + geom_point(size=2)+ theme_minimal()+ theme(axis.text.x = element_text(size = 12), 
+  axis.text.y = element_text(size = 12), plot.title = element_text(size = 13, face = "bold",hjust=0.5), 
+  legend.position = "bottom", legend.box = "horizontal",
+  legend.text = element_text(size = 12),legend.title = element_text(face = "plain", size = 12),
+  axis.title.x = element_text(face = "plain", size = 12), axis.title.y = element_text(face = "plain", size = 12))+
+  scale_color_manual(name = "Metric", values= clrs) + 
+  facet_wrap(~Model,ncol=1) + ggtitle("Model Performance in Test Phase (LOOV)") + 
+  xlab("Number of DMRs used") + ylab("Performance") + geom_vline(xintercept = 4, linetype="dotted", 
+                color = "#484349", size=0.8)
+
+ml_test
+```
+
+```{r}
+### Fig 4D ###
+
+matrix_top4_df_melt <- read.csv(file = "../tables/fig4d_data.csv")
+matrix_top4_df_melt$Group<- ifelse(matrix_top4_df_melt$Group=="Case","Endometriosis","Control")
+matrix_top4_df_melt$Group <- factor(matrix_top4_df_melt$Group, levels=c("Control","Endometriosis"))
+matrix_top4_df_melt$variable <- factor(
+  matrix_top4_df_melt$variable,
+  levels = unique(matrix_top4_df_melt$variable)
+)
+colnames(matrix_top4_df_melt)[1] <- "Diagnosis"
+
+cols<-c("#10a9e5","#E63E6B")
+boxplot_4dmr<- ggplot(matrix_top4_df_melt,  aes(y = value, x = Diagnosis, fill = Diagnosis)) +
+   geom_boxplot() +facet_wrap(~ variable)+ theme_classic()+  ylab("Methylation estimates") + xlab("")+
+   theme(legend.position = "right")+scale_fill_manual(values=cols)
+
+
+```

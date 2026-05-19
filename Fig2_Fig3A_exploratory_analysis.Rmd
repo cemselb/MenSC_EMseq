@@ -1,0 +1,147 @@
+---
+title: "Fig2_Fig3A_exploratory_analysis"
+output: html_document
+date: "2025-07-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+library(dmrseq)
+library(DMRichR)
+library(ggplot2)
+library(caret)
+library(readr)
+library(forcats)
+library(PCAtools)
+library(viridis)
+library(reshape2)
+library(patchwork)
+library(annotatr)
+library(ggpubr)
+library(randomcoloR)
+
+DMR_regions_pval <- read.csv(file = "../tables/Fig2A_genomic_context.csv")
+DMR_regions_pval$CpG_type
+
+CpG_type <- function(CpG_vector) {
+  if (CpG_vector[1] == "Yes") {
+    return("CpG island")
+  } else if (CpG_vector[2] == "Yes") {
+    return("CpG shore")
+  } else if (CpG_vector[3] == "Yes") {
+    return("CpG shelf")
+  } else {
+    return("Open sea")
+  }
+}
+
+CpG_type_vector <- rep(x = "na", nrow(DMR_regions_pval))
+for (x in 1:nrow(DMR_regions_pval)) {
+  
+  CpG_vector <- DMR_regions_pval[x,c(3:6)]
+  CpG_type_vector[x] <- CpG_type(CpG_vector)
+  
+}
+
+DMR_regions_pval$CpG_type <- CpG_type_vector
+
+DMR_context_df <- data.frame(CpG_type = DMR_regions_pval$CpG_type,
+                             Genomic_region = DMR_regions_pval$annotation,
+                             Direction = DMR_regions_pval$direction)
+
+context<- melt(DMR_context_df, "Direction")
+
+context<- as.data.frame(table(DMR_context_df$CpG_type, DMR_context_df$Direction))
+context2<- as.data.frame(table(DMR_context_df$Genomic_region, DMR_context_df$Direction))
+context_df<- rbind(context, context2)
+context_df$Context<-c(rep("Cpg_Type",8),rep("Genomic_region",14))
+
+clrs<-randomColor(2,hue="random")
+#c("#5B9BD5","#AD9AC9")
+context_df$Context<-ifelse(context_df$Context=="Cpg_Type","CpG Type","Genomic Region")
+
+context_df %>% 
+  ggplot( aes(x = Var1, y = Freq, fill = Var2)) +
+  geom_bar(stat = "identity") + coord_flip() + facet_wrap(~Context,scales="free")+
+  theme_pubr()+ labs(y = "DMRs (n)", x = "", fill="Direction") +
+  scale_fill_manual(values = c(clrs[2],clrs[1]))+  theme(text=element_text(size=12,  family="Helvetica"),
+                                           axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5),
+                                           legend.title = element_text(size = 13),
+                                           legend.text = element_text(size = 12)  )
+
+context_df
+
+```
+
+```{r}
+bsseq_cov3 <- readRDS(file = "../objects/bsbolt_cov3.rds")
+methylLearn_DMRs <- read.csv(file = "../tables/methylLearn_DMR_selected.csv")
+
+matrix_smooth <- getMeth(BSseq = bsseq_cov3, regions = GRanges(methylLearn_DMRs), type = "smooth", what = "perRegion")
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+### Fig 2B ###
+
+variables_to_plot <-  c("Centre","Diagnosis","Age", "Age of menarche", "BMI", "Parity","Processing Time (h)")
+
+pca_data <- PCAtools::pca( mat = matrix_smooth, metadata = pData(bsseq_cov3), 
+                           removeVar = 0.1, center = T, scale = T)
+my_palette <- c("#8C3A5D","#CACDD1","#048BA8")
+
+coor_plot <- eigencorplot(pca_data,
+                          components = getComponents(pca_data, 1:10),
+                          metavars = variables_to_plot,
+                          col= my_palette,
+                          cexCorval = 1,
+                          colCorval = 'white',
+                          fontCorval = 2,
+                          posLab = 'bottomleft',
+                          rotLabX = 45,
+                          posColKey = 'right',
+                          cexLabColKey = 1.2,  cexMain = 1.2,
+                          cexLabX = 1, cexLabY = 1, fontLabY = 1, fontLabX = 1, fontMain = 2,
+                          scale = TRUE,
+                          main = 'PC1-10 metavariable correlations',
+                          colFrame = 'white',
+                          plotRsquared = FALSE)
+```
+
+```{r}
+### Fig 2C ###
+
+PCAtools::biplot( x = "PC1",y = "PC2",pcaobj = pca_data,colby = "Diagnosis",colLegendTitle = "Diagnosis",
+                          shapeLegendTitle="Diagnosis",
+                          legendPosition = "top", shape = "Diagnosis", lab = NULL, showLoadings = F,
+                          colkey = c(Endometriosis="#E63E6B",Control="#10a9e5"), pointSize=2.5,
+                          shapekey = c(Endometriosis=16,Control=17),
+                          theme(text=element_text(size=12), family="Helvetica"))
+
+```
+
+```{r}
+### Fig 3A ###
+
+annotation_colors <- list(
+  Age = c("#440154","#363b60","#2e7682","#2bbaa7"),
+  Centre = c("CHUIMI" = "#fd9526", "HCB" = "#efe65b"),
+  Diagnosis = c("Endometriosis" = "#e81045", "Control" = "#1897de")
+)
+rownames(matrix_smooth) <-  paste(methylLearn_DMRs$SYMBOL, methylLearn_DMRs$annotation)
+heatmap_methykit <- pheatmap::pheatmap(matrix_smooth, 
+                                           annotation_col = as.data.frame(pData(bsseq_cov3)[,c("Diagnosis","Centre","Age")]), 
+                                           scale = "row", 
+                                           cluster_rows = T,
+                                           color = rev(RColorBrewer::brewer.pal(14, name = "RdBu")),
+                                           annotation_colors = annotation_colors,
+                                           show_colnames = F, treeheight_row = 0)  
+
+```

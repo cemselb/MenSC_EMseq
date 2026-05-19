@@ -1,0 +1,202 @@
+---
+title: "Fig3B_pathwayAnalysis"
+output: html_document
+date: "2025-07-15"
+---
+
+## Updated SLIMGO function to handle WebgestaltR output
+
+```{r}
+slimGO2 <- function(GO = GO,
+                    tool = c("enrichR", "rGREAT", "GOfuncR", "WebGestalt"),
+                    annoDb = annoDb,
+                    plots = FALSE,
+                    threshold = 0.7) {
+  
+  if (tool == "enrichR") {
+    GO <- GO %>%
+      data.table::rbindlist(idcol = "Gene Ontology") %>%
+      dplyr::as_tibble() %>%
+      dplyr::filter(`Gene Ontology` %in% c("GO_Biological_Process_2018",
+                                           "GO_Cellular_Component_2018",
+                                           "GO_Molecular_Function_2018")) %>% 
+      dplyr::mutate(Term = stringr::str_extract(.$Term, "\\(GO.*")) %>%
+      dplyr::mutate(Term = stringr::str_replace_all(.$Term, "[\\(\\)]", "")) %>%
+      dplyr::mutate(`Gene Ontology` = dplyr::case_when(
+        `Gene Ontology` == "GO_Biological_Process_2018" ~ "BP",
+        `Gene Ontology` == "GO_Cellular_Component_2018" ~ "CC",
+        `Gene Ontology` == "GO_Molecular_Function_2018" ~ "MF"
+      )) %>%
+      dplyr::select(p = P.value, go = Term, `Gene Ontology`) %>% 
+      dplyr::filter(p < 0.05)
+    
+  } else if (tool == "rGREAT") {
+    
+    GO <- GO %>%
+      data.table::rbindlist(idcol = "Gene Ontology") %>%
+      dplyr::as_tibble() %>%
+      dplyr::mutate(`Gene Ontology` = dplyr::case_when(
+        `Gene Ontology` == "GO Biological Process" ~ "BP",
+        `Gene Ontology` == "GO Cellular Component" ~ "CC",
+        `Gene Ontology` == "GO Molecular Function" ~ "MF"
+      )) %>%
+      dplyr::select(p = Hyper_Raw_PValue, go = ID, `Gene Ontology`) %>% 
+      dplyr::filter(p < 0.05)
+    
+  } else if (tool == "GOfuncR") {
+    
+    GO <- GO$results %>%
+      dplyr::as_tibble() %>%
+      dplyr::mutate(`Gene Ontology` = dplyr::case_when(
+        ontology == "biological_process" ~ "BP",
+        ontology == "cellular_component" ~ "CC",
+        ontology == "molecular_function" ~ "MF"
+      )) %>%
+      dplyr::select(p = raw_p_overrep, go = node_id, `Gene Ontology`) %>% 
+      dplyr::filter(p < 0.05)
+    
+  } else if (tool == "WebGestalt") {
+    
+    GO <- GO %>%
+      dplyr::mutate(`Gene Ontology` = dplyr::case_when(
+        grepl("Biological_Process", database) ~ "BP",
+        grepl("Cellular_Component", database) ~ "CC",
+        grepl("Molecular_Function", database) ~ "MF",
+        TRUE ~ "Other"
+      )) %>%
+      dplyr::filter(`Gene Ontology` %in% c("BP", "CC", "MF")) %>%
+      dplyr::select(p = pValue, go = geneSet, FDR, `Enrichment Ratio` = enrichmentRatio, `Gene Ontology`) %>%
+      dplyr::filter(p < 0.05)
+    
+  } else {
+    stop(glue::glue("{tool} is not supported, please choose either enrichR, rGREAT, GOfuncR, or WebGestalt [Case Sensitive]"))
+  }
+  
+  print(glue::glue("Submiting results from {tool} to rrvgo..."))
+  
+  .slim <- function(GO = GO, ont = ont, annoDb = annoDb, plots = plots, tool = tool, threshold = threshold) {
+    GO <- GO %>% dplyr::filter(`Gene Ontology` == ont)
+    
+    print(glue::glue("rrvgo is now slimming {ont} GO terms from {tool}"))
+    
+    simMatrix  <- rrvgo::calculateSimMatrix(GO$go,
+                                            orgdb = annoDb,
+                                            ont = ont,
+                                            method = "Rel")
+    
+    reducedTerms <- rrvgo::reduceSimMatrix(simMatrix,
+                                           setNames(-log10(GO$p), GO$go),
+                                           threshold = threshold,
+                                           orgdb = annoDb)
+    
+    if (plots == TRUE) {
+      p <- rrvgo::scatterPlot(simMatrix, reducedTerms)
+      plot(p)
+      rrvgo::treemapPlot(reducedTerms)
+    }
+    
+    print(glue::glue("There are {max(reducedTerms$cluster)} clusters in your GO {ont} terms from {tool}"))
+    
+    reducedTerms %>% dplyr::as_tibble()
+  }
+  
+  # Filter valid GO categories
+  GO <- GO %>% dplyr::filter(`Gene Ontology` %in% c("BP", "MF", "CC"))
+  
+  slimmed <- GO %>%
+    dplyr::select(`Gene Ontology`) %>%
+    table() %>%
+    names() %>% 
+    purrr::set_names() %>%
+    purrr::map_dfr(~.slim(GO = GO,
+                          ont = .,
+                          annoDb = annoDb,
+                          tool = tool,
+                          plots = plots,
+                          threshold = threshold),
+                   .id = "Gene Ontology") %>%
+    dplyr::inner_join(GO, by = c("Gene Ontology", "go")) %>%
+    dplyr::filter(term == as.character(parentTerm)) %>%
+    dplyr::mutate("-log10.p-value" = -log10(p)) %>%
+    dplyr::mutate(`Gene Ontology` = dplyr::recode_factor(`Gene Ontology`,
+                                                         "BP" = "Biological Process",
+                                                         "CC" = "Cellular Component",
+                                                         "MF" = "Molecular Function")) %>%
+    dplyr::arrange(dplyr::desc(`-log10.p-value`)) %>% 
+    dplyr::select(`Gene Ontology`, Term = term, "-log10.p-value", 
+                  dplyr::any_of(c("FDR", "Enrichment Ratio"))) %>% 
+    return()
+}
+
+capFirst <- function(s) {
+  paste(toupper(substring(s, 1, 1)), substring(s, 2), sep = "")
+}
+
+
+```
+
+```{r}
+
+library(GOSemSim)
+library(scales)
+library(DMRichR)
+library(GenomicRanges)
+DMRichR::annotationDatabases(genome = "hg38")
+
+
+library(readr)
+library(WebGestaltR)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+library(extrafont)
+loadfonts(device="all")
+
+```
+
+## Pathway Analysis
+```{r}
+
+gene_hyper_vector <- readRDS(file = "../objects/gene_list_unique_hyper.rds")
+
+urllist<-WebGestaltR::listGeneSet()
+
+webgestalt_enrich <- WebGestaltR::WebGestaltR(enrichMethod = "ORA", 
+    enrichDatabase = c("geneontology_Biological_Process", "pathway_Reactome","pathway_KEGG"), 
+    interestGene = c(gene_hyper_vector), interestGeneType = "genesymbol", 
+    referenceSet = "genome", isOutput = F, minNum = 10, maxNum = 500, fdrThr = 0.05)
+
+webgestalt_enrich$description <- str_to_sentence(string = webgestalt_enrich$description)
+webgestalt_enrich$description <- factor(webgestalt_enrich$description,levels = rev(webgestalt_enrich$description))
+
+slimGO2(GO=webgestalt_enrich, tool="WebGestalt", annoDb = annoDb, plots=F, threshold=0.7 ) -> enrichPlot
+enrichPlot$Term<-capFirst(enrichPlot$Term)
+
+enrichPlot$Term <- factor(enrichPlot$Term, levels = enrichPlot$Term[order(enrichPlot$FDR, decreasing = TRUE)])
+
+  
+enrichPlot$labels<- c("Cell growth & migration", "Gland-like structure formation","Tissue invasion & adhesion",
+                        "Migration & invasion", "Angiogenesis & cell survival", "Implantation & persistence", 
+                       "EMT, invasion & metastasis", "Neuroangiogenesis & pain", "Müllerian remnants")
+  
+  
+fig3b <- ggplot(enrichPlot, aes(x = -log10(FDR), y = reorder(Term, -log10(FDR)), fill = -log10(FDR))) +
+    geom_col(width = 0.8, color = "black") +
+    scale_fill_gradient(low = "#d2e9f7", high = "#08519c") +
+    theme_pubr() + ylab("") + xlab("-log10(FDR)") +
+    theme(
+      text = element_text(size = 12, colour = "black", face = "plain", family = "Helvetica"),
+      axis.text.x = element_text(size = 12, colour = "black"),
+      axis.text.y = element_text(size = 12, colour = "black"),
+      axis.title = element_text(size = 12, face = "plain"),
+      title = element_text(face = "plain"),
+    ) +  theme(legend.position = "right")+
+    scale_y_discrete(labels = label_wrap(40)) +
+    guides(fill = guide_colorbar(title = "-log10(FDR)", label.position = "right",
+                                 title.position = "top", title.vjust = 1,  frame.colour = "black", barwidth = 1.5,
+                                 barheight = 10))+  
+    geom_text(aes(label = labels), hjust = 1.1, size=3,color=c("white",rep("black",8)))
+  
+fig3b
+ 
+```
